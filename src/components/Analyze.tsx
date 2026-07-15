@@ -1,7 +1,7 @@
 import React, { useState, useContext, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppContext } from '../App';
-import { Upload, Loader2, FileText, CheckCircle2, Link as LinkIcon, FileSpreadsheet, ListChecks } from 'lucide-react';
+import { Upload, Loader2, FileText, CheckCircle2, Link as LinkIcon, FileSpreadsheet, ListChecks, Mail, HardDrive, File as FileIcon } from 'lucide-react';
 import { useGoogleLogin } from '@react-oauth/google';
 import type { Event } from '../types';
 
@@ -22,6 +22,9 @@ export default function Analyze() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [workspaceUrl, setWorkspaceUrl] = useState('');
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
+  const [activeTab, setActiveTab] = useState<'url' | 'drive' | 'gmail'>('url');
+  const [driveFiles, setDriveFiles] = useState<any[]>([]);
+  const [emails, setEmails] = useState<any[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
 
@@ -33,7 +36,7 @@ export default function Analyze() {
       setAccessToken(tokenResponse.access_token);
       setShowWorkspaceModal(true);
     },
-    scope: 'https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/spreadsheets.readonly',
+    scope: 'https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.readonly https://mail.google.com/',
     onError: () => setError('Login Failed'),
   });
 
@@ -121,6 +124,88 @@ export default function Analyze() {
     } finally {
       setIsLoadingWorkspace(false);
     }
+  };
+
+  useEffect(() => {
+    if (showWorkspaceModal && accessToken) {
+      if (activeTab === 'drive' && driveFiles.length === 0) fetchDriveFiles();
+      if (activeTab === 'gmail' && emails.length === 0) fetchEmails();
+    }
+  }, [activeTab, showWorkspaceModal, accessToken]);
+
+  const fetchDriveFiles = async () => {
+    try {
+      setIsLoadingWorkspace(true);
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.document' or mimeType='application/vnd.google-apps.spreadsheet'&orderBy=modifiedTime desc&pageSize=15`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      setDriveFiles(data.files || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingWorkspace(false);
+    }
+  };
+
+  const fetchEmails = async () => {
+    try {
+      setIsLoadingWorkspace(true);
+      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      if (!data.messages) {
+        setEmails([]);
+        return;
+      }
+      const detailedMessages = await Promise.all(data.messages.map(async (msg: any) => {
+        const mRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        return await mRes.json();
+      }));
+      setEmails(detailedMessages);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingWorkspace(false);
+    }
+  };
+
+  const handleDriveFileSelect = (file: any) => {
+    const isSheet = file.mimeType.includes('spreadsheet');
+    setWorkspaceUrl(`https://docs.google.com/${isSheet ? 'spreadsheets' : 'document'}/d/${file.id}`);
+    setActiveTab('url');
+  };
+
+  const handleEmailSelect = (email: any) => {
+    const subject = email.payload.headers.find((h: any) => h.name === 'Subject')?.value || 'No Subject';
+    let body = email.snippet || '';
+    
+    const getBodyText = (parts: any[]): string => {
+      let text = '';
+      for (const part of parts) {
+        if (part.mimeType === 'text/plain' && part.body?.data) {
+          text += atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+        } else if (part.parts) {
+          text += getBodyText(part.parts);
+        }
+      }
+      return text;
+    };
+
+    if (email.payload.parts) {
+      const extracted = getBodyText(email.payload.parts);
+      if (extracted) body = extracted;
+    } else if (email.payload.body?.data) {
+      try {
+        body = atob(email.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+      } catch (e) {}
+    }
+
+    setText(`Subject: ${subject}\n\n${body}`);
+    setShowWorkspaceModal(false);
   };
 
   const applyWorkspaceSelection = () => {
@@ -358,48 +443,113 @@ export default function Analyze() {
               <h3 className="text-lg font-bold text-gray-900">Import from Google Workspace</h3>
               <button onClick={() => setShowWorkspaceModal(false)} className="text-gray-400 hover:text-gray-500">×</button>
             </div>
-            <div className="p-6 overflow-y-auto">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Paste Google Doc or Sheet URL..."
-                  value={workspaceUrl}
-                  onChange={(e) => setWorkspaceUrl(e.target.value)}
-                  className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                />
-                <button
-                  onClick={handleFetchWorkspace}
-                  disabled={isLoadingWorkspace || !workspaceUrl}
-                  className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
-                >
-                  {isLoadingWorkspace ? <Loader2 className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
-                  Fetch
-                </button>
-              </div>
+            
+            <div className="flex border-b border-gray-200 px-6 pt-2 gap-4">
+              <button 
+                onClick={() => setActiveTab('url')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'url' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                <LinkIcon className="w-4 h-4" /> Docs/Sheets URL
+              </button>
+              <button 
+                onClick={() => setActiveTab('drive')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'drive' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                <HardDrive className="w-4 h-4" /> Google Drive
+              </button>
+              <button 
+                onClick={() => setActiveTab('gmail')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'gmail' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                <Mail className="w-4 h-4" /> Gmail
+              </button>
+            </div>
 
-              {sections.length > 0 && (
-                <div className="mt-6">
-                  <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-gray-700">
-                    <ListChecks className="w-4 h-4" />
-                    Select sections to import
+            <div className="p-6 overflow-y-auto">
+              {activeTab === 'url' && (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Paste Google Doc or Sheet URL..."
+                      value={workspaceUrl}
+                      onChange={(e) => setWorkspaceUrl(e.target.value)}
+                      className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      onClick={handleFetchWorkspace}
+                      disabled={isLoadingWorkspace || !workspaceUrl}
+                      className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {isLoadingWorkspace ? <Loader2 className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
+                      Fetch
+                    </button>
                   </div>
-                  <div className="space-y-2 border border-gray-200 rounded-lg p-2 max-h-64 overflow-y-auto bg-gray-50">
-                    {sections.map(section => (
-                      <label key={section.id} className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-md cursor-pointer hover:bg-indigo-50">
-                        <input
-                          type="checkbox"
-                          checked={section.selected}
-                          onChange={() => toggleSection(section.id)}
-                          className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                        />
-                        <span className="font-medium text-gray-800 text-sm">{section.title}</span>
-                      </label>
-                    ))}
-                  </div>
+                  {sections.length > 0 && (
+                    <div className="mt-6">
+                      <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-gray-700">
+                        <ListChecks className="w-4 h-4" />
+                        Select sections to import
+                      </div>
+                      <div className="space-y-2 border border-gray-200 rounded-lg p-2 max-h-64 overflow-y-auto bg-gray-50">
+                        {sections.map(section => (
+                          <label key={section.id} className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-md cursor-pointer hover:bg-indigo-50">
+                            <input
+                              type="checkbox"
+                              checked={section.selected}
+                              onChange={() => toggleSection(section.id)}
+                              className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                            />
+                            <span className="font-medium text-gray-800 text-sm">{section.title}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {activeTab === 'drive' && (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {isLoadingWorkspace ? (
+                    <div className="flex justify-center p-8 text-gray-500"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                  ) : driveFiles.length > 0 ? (
+                    driveFiles.map(file => (
+                      <div key={file.id} onClick={() => handleDriveFileSelect(file)} className="p-3 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer flex items-center gap-3">
+                        <FileIcon className={`w-5 h-5 ${file.mimeType.includes('spreadsheet') ? 'text-green-600' : 'text-blue-600'}`} />
+                        <span className="font-medium text-gray-800 text-sm">{file.name}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-500 text-center py-4">No recent documents found.</p>
+                  )}
                 </div>
               )}
+
+              {activeTab === 'gmail' && (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {isLoadingWorkspace ? (
+                    <div className="flex justify-center p-8 text-gray-500"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                  ) : emails.length > 0 ? (
+                    emails.map(email => {
+                      const subject = email.payload.headers.find((h: any) => h.name === 'Subject')?.value || 'No Subject';
+                      const from = email.payload.headers.find((h: any) => h.name === 'From')?.value || 'Unknown Sender';
+                      return (
+                        <div key={email.id} onClick={() => handleEmailSelect(email)} className="p-3 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer flex flex-col gap-1">
+                          <span className="font-bold text-gray-800 text-sm">{subject}</span>
+                          <span className="text-xs text-gray-500">{from}</span>
+                          <span className="text-sm text-gray-600 truncate">{email.snippet}</span>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <p className="text-gray-500 text-center py-4">No recent emails found.</p>
+                  )}
+                </div>
+              )}
+
             </div>
-            {sections.length > 0 && (
+            {activeTab === 'url' && sections.length > 0 && (
               <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end">
                 <button
                   onClick={applyWorkspaceSelection}
