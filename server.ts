@@ -93,13 +93,11 @@ async function startServer() {
   app.post("/api/events/extract", async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: "Text is required" });
-
     try {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         throw new Error("API key not configured. Please add GEMINI_API_KEY to your environment variables or .env file.");
       }
-
       const { GoogleGenAI, Type } = await import("@google/genai");
       const ai = new GoogleGenAI({ 
         apiKey: apiKey,
@@ -142,6 +140,108 @@ async function startServer() {
       res.json(data);
     } catch (error: any) {
       console.error("Extraction error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/events/extract-batch", async (req, res) => {
+    const { text, inlineData } = req.body;
+    if (!text && !inlineData) return res.status(400).json({ error: "Text or document is required" });
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("API key not configured. Please add GEMINI_API_KEY to your environment variables or .env file.");
+      }
+      const { GoogleGenAI, Type } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: apiKey });
+      
+      const prompt = `Extract structured data for multiple events from the provided document or text. 
+If it's a spreadsheet/table, the first row usually contains detailed information/headers and then each subsequent row represents an event and its respective details.
+Extract an array of event objects. Each object should have these 19 fields: title, date, location, organizer, priority (High, Medium, Low), representative, theme, description, targetAudience, objectives, cost, deadline, format (In-person, Online, Hybrid), language, contactPerson, contactEmail, website, requiredPreparation, notes.
+Please do not exceed 30 events to avoid truncation.
+\n\n${text || ""}`;
+
+      const contents: any[] = [prompt];
+      if (inlineData) {
+        contents.push({
+          inlineData: {
+            data: inlineData.data,
+            mimeType: inlineData.mimeType
+          }
+        });
+      }
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents,
+        config: {
+          maxOutputTokens: 8192,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                date: { type: Type.STRING },
+                location: { type: Type.STRING },
+                organizer: { type: Type.STRING },
+                priority: { type: Type.STRING },
+                representative: { type: Type.STRING },
+                theme: { type: Type.STRING },
+                description: { type: Type.STRING },
+                targetAudience: { type: Type.STRING },
+                objectives: { type: Type.STRING },
+                cost: { type: Type.STRING },
+                deadline: { type: Type.STRING },
+                format: { type: Type.STRING },
+                language: { type: Type.STRING },
+                contactPerson: { type: Type.STRING },
+                contactEmail: { type: Type.STRING },
+                website: { type: Type.STRING },
+                requiredPreparation: { type: Type.STRING },
+                notes: { type: Type.STRING }
+              },
+              required: ["title", "date", "location", "organizer", "priority", "representative"]
+            }
+          }
+        }
+      });
+      
+      let data;
+      const responseText = response.text || "[]";
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        console.warn("Batch extraction JSON parse failed, attempting to salvage truncated JSON");
+        try {
+          // Extract valid JSON objects using regex (since schema is a flat object array)
+          const objectRegex = /{[^{}]*}/g;
+          const matches = responseText.match(objectRegex);
+          if (matches && matches.length > 0) {
+            const validObjects = matches.map(m => {
+              try {
+                return JSON.parse(m);
+              } catch (err) {
+                return null;
+              }
+            }).filter(Boolean);
+            if (validObjects.length > 0) {
+              data = validObjects;
+            } else {
+              throw new Error("Could not parse any complete events from the truncated output.");
+            }
+          } else {
+            throw new Error("The document is too large and the analysis was truncated. Please try a smaller document or fewer events.");
+          }
+        } catch (recoveryErr: any) {
+          throw new Error("The document is too large and the analysis was truncated. Please try a smaller document or fewer events.");
+        }
+      }
+      
+      res.json(data);
+    } catch (error: any) {
+      console.error("Batch extraction error:", error);
       res.status(500).json({ error: error.message });
     }
   });

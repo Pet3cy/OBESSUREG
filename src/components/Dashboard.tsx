@@ -1,9 +1,11 @@
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import { AppContext } from '../App';
 import { Calendar, MapPin, Tag } from 'lucide-react';
 
 export default function Dashboard() {
   const context = useContext(AppContext);
+  const [filter, setFilter] = useState<'Upcoming' | 'Past'>('Upcoming');
+
   if (!context) return null;
   const { events } = context;
 
@@ -22,30 +24,58 @@ export default function Dashboard() {
       case 'Reviewed': return 'bg-blue-400';
       case 'Accepted': return 'bg-green-500';
       case 'Declined': return 'bg-red-500';
+      case 'Completed': return 'bg-emerald-600';
+      case 'Pass': return 'bg-gray-500';
       default: return 'bg-gray-400';
     }
   };
 
+  const filteredEvents = events.filter(event => {
+    const isPast = event.status === 'Completed' || event.status === 'Pass';
+    if (filter === 'Upcoming') return !isPast;
+    return isPast;
+  });
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center border-b border-gray-200 pb-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Event Pipeline</h2>
           <p className="text-gray-500 mt-1">Chronological list of all analyzed events</p>
         </div>
+        <div className="flex bg-gray-100 rounded-lg p-1">
+          <button
+            onClick={() => setFilter('Upcoming')}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+              filter === 'Upcoming' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Upcoming
+          </button>
+          <button
+            onClick={() => setFilter('Past')}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+              filter === 'Past' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Past
+          </button>
+        </div>
       </div>
 
-      {events.length === 0 ? (
+      {filteredEvents.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl p-12 text-center">
-          <p className="text-gray-500 mb-4">No events have been added yet.</p>
-          <a href="/analyze" className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
-            Analyze New Invitation
-          </a>
+          <p className="text-gray-500 mb-4">No {filter.toLowerCase()} events have been found.</p>
+          {filter === 'Upcoming' && (
+            <a href="/analyze" className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+              Analyze New Invitation
+            </a>
+          )}
         </div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <ul className="divide-y divide-gray-200">
-            {events.map((event) => (
+            {filteredEvents.map((event) => (
               <li key={event.id} className="p-6 hover:bg-gray-50 transition-colors">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
@@ -55,6 +85,11 @@ export default function Dashboard() {
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${getPriorityColor(event.priority)}`}>
                         {event.priority} Priority
                       </span>
+                      {(event.status === 'Completed' || event.status === 'Pass') && (
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-medium border bg-gray-100 text-gray-700 border-gray-200">
+                          {event.status}
+                        </span>
+                      )}
                     </div>
                     
                     <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600 mt-3">
@@ -66,12 +101,14 @@ export default function Dashboard() {
                         <MapPin className="w-4 h-4 text-gray-400" />
                         {event.location}
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <Tag className="w-4 h-4 text-gray-400" />
-                        {event.theme}
-                      </div>
+                      {event.theme && event.theme !== 'General' && (
+                        <div className="flex items-center gap-1.5">
+                          <Tag className="w-4 h-4 text-gray-400" />
+                          {event.theme}
+                        </div>
+                      )}
                     </div>
-                    <p className="mt-3 text-sm text-gray-600 line-clamp-2">{event.description}</p>
+                    {event.description && <p className="mt-3 text-sm text-gray-600 line-clamp-2">{event.description}</p>}
                     
                     <div className="mt-4 flex items-center gap-2">
                       <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Suggested Rep:</span>

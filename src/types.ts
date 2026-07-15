@@ -1,5 +1,5 @@
 export type Priority = 'High' | 'Medium' | 'Low';
-export type Status = 'Pending' | 'Reviewed' | 'Accepted' | 'Declined';
+export type Status = 'Pending' | 'Reviewed' | 'Accepted' | 'Declined' | 'Completed' | 'Pass';
 
 export interface Event {
   id: string;

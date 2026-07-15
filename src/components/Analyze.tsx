@@ -1,8 +1,9 @@
-import React, { useState, useContext, useEffect } from 'react';
+import React, { useState, useContext, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppContext } from '../App';
-import { Upload, Loader2, FileText, CheckCircle2, Link as LinkIcon, FileSpreadsheet, ListChecks, Mail, HardDrive, File as FileIcon, Calendar, CheckSquare, Users, StickyNote } from 'lucide-react';
+import { Upload, Loader2, FileText, CheckCircle2, Link as LinkIcon, FileSpreadsheet, ListChecks, Mail, HardDrive, File as FileIcon, Calendar, CheckSquare, Users, StickyNote, X } from 'lucide-react';
 import { useGoogleLogin } from '@react-oauth/google';
+import * as XLSX from 'xlsx';
 import type { Event } from '../types';
 
 interface Section {
@@ -16,7 +17,8 @@ export default function Analyze() {
   const [text, setText] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<Partial<Event> | null>(null);
+  const [results, setResults] = useState<Partial<Event>[] | null>(null);
+  const [attachedFile, setAttachedFile] = useState<{data: string, mimeType: string, name: string} | null>(null);
   
   // Workspace Import state
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -325,15 +327,45 @@ export default function Analyze() {
     setShowWorkspaceModal(false);
   };
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const toggleSection = (id: string) => {
     setSections(prev => prev.map(s => s.id === id ? { ...s, selected: !s.selected } : s));
   };
 
   if (!context) return null;
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.name.endsWith('.xlsx') || file.name.endsWith('.csv')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, {type: 'array'});
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const csv = XLSX.utils.sheet_to_csv(firstSheet);
+        setText(prev => prev + (prev ? '\n\n' : '') + csv);
+        setAttachedFile(null); // Text is directly inserted
+      };
+      reader.readAsArrayBuffer(file);
+    } else if (file.name.endsWith('.pdf')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = (e.target?.result as string).split(',')[1];
+        setAttachedFile({ data: base64, mimeType: 'application/pdf', name: file.name });
+      };
+      reader.readAsDataURL(file);
+    }
+    
+    // Clear input so same file can be uploaded again if needed
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleAnalyze = async () => {
-    if (!text.trim()) {
-      setError('Please enter some text or a Google Workspace URL to analyze.');
+    if (!text.trim() && !attachedFile) {
+      setError('Please enter some text, upload a file, or provide a Google Workspace URL to analyze.');
       return;
     }
 
@@ -385,10 +417,18 @@ export default function Analyze() {
         }
       }
 
-      const response = await fetch('/api/events/extract', {
+      const payload: any = { text: contentToAnalyze };
+      if (attachedFile) {
+        payload.inlineData = {
+          data: attachedFile.data,
+          mimeType: attachedFile.mimeType
+        };
+      }
+
+      const response = await fetch('/api/events/extract-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: contentToAnalyze })
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
@@ -396,7 +436,7 @@ export default function Analyze() {
       }
 
       const data = await response.json();
-      setResult(data);
+      setResults(Array.isArray(data) ? data : [data]);
     } catch (err: any) {
       setError(err.message || 'An error occurred during analysis.');
     } finally {
@@ -405,46 +445,49 @@ export default function Analyze() {
   };
 
   const handleSave = () => {
-    if (!result) return;
+    if (!results || results.length === 0) return;
 
-    const newEvent: Event = {
-      id: Math.random().toString(36).substring(7),
-      title: result.title || 'Untitled Event',
-      date: result.date || 'TBD',
-      location: result.location || 'TBD',
-      organizer: result.organizer || 'Unknown',
-      priority: (result.priority as any) || 'Medium',
-      status: 'Pending',
-      representative: result.representative || 'Unassigned',
-      theme: result.theme || 'General',
-      description: result.description || '',
-      targetAudience: result.targetAudience || '',
-      objectives: result.objectives || '',
-      cost: result.cost || '',
-      deadline: result.deadline || '',
-      format: result.format || '',
-      language: result.language || '',
-      contactPerson: result.contactPerson || '',
-      contactEmail: result.contactEmail || '',
-      website: result.website || '',
-      requiredPreparation: result.requiredPreparation || '',
-      notes: result.notes || ''
-    };
+    let updatedStaff = [...context.staff];
+    const newEvents = results.map(result => {
+      const newEvent: Event = {
+        id: Math.random().toString(36).substring(7),
+        title: result.title || 'Untitled Event',
+        date: result.date || 'TBD',
+        location: result.location || 'TBD',
+        organizer: result.organizer || 'Unknown',
+        priority: (result.priority as any) || 'Medium',
+        status: 'Pending',
+        representative: result.representative || 'Unassigned',
+        theme: result.theme || 'General',
+        description: result.description || '',
+        targetAudience: result.targetAudience || '',
+        objectives: result.objectives || '',
+        cost: result.cost || '',
+        deadline: result.deadline || '',
+        format: result.format || '',
+        language: result.language || '',
+        contactPerson: result.contactPerson || '',
+        contactEmail: result.contactEmail || '',
+        website: result.website || '',
+        requiredPreparation: result.requiredPreparation || '',
+        notes: result.notes || ''
+      };
 
-    context.setEvents([...context.events, newEvent]);
+      if (newEvent.representative && newEvent.representative !== 'Unassigned') {
+        const repLower = newEvent.representative.toLowerCase();
+        updatedStaff = updatedStaff.map(s => {
+          if (repLower.includes(s.name.split(' ')[0].toLowerCase())) {
+            return { ...s, eventCount: s.eventCount + 1 };
+          }
+          return s;
+        });
+      }
+      return newEvent;
+    });
+
+    context.setEvents([...context.events, ...newEvents]);
+    context.setStaff(updatedStaff);
     
-    // Increment representative count if found
-    if (newEvent.representative && newEvent.representative !== 'Unassigned') {
-      const repLower = newEvent.representative.toLowerCase();
-      const updatedStaff = context.staff.map(s => {
-        if (repLower.includes(s.name.split(' ')[0].toLowerCase())) {
-          return { ...s, eventCount: s.eventCount + 1 };
-        }
-        return s;
-      });
-      context.setStaff(updatedStaff);
-    }
-
     navigate('/');
   };
 
@@ -457,29 +500,60 @@ export default function Analyze() {
             <h2 className="text-2xl font-bold text-gray-900">Analyze Invitation</h2>
             <p className="text-gray-500 mt-1">Paste the event invitation text below to extract structured data.</p>
           </div>
-          <button
-            onClick={() => accessToken ? setShowWorkspaceModal(true) : login()}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-green-600" />
-            Import from Google Docs/Sheets
-          </button>
+          <div className="flex items-center gap-2">
+            <input 
+              type="file" 
+              ref={fileInputRef}
+              onChange={handleFileUpload} 
+              accept=".pdf,.xlsx,.csv" 
+              className="hidden" 
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm"
+            >
+              <Upload className="w-4 h-4 text-indigo-600" />
+              Upload Document
+            </button>
+            <button
+              onClick={() => accessToken ? setShowWorkspaceModal(true) : login()}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-green-600" />
+              Import from Workspace
+            </button>
+          </div>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-          <textarea
-            className="w-full h-96 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none font-sans"
-            placeholder="Paste email, document text, or invitation details here..."
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
+          {attachedFile ? (
+            <div className="w-full h-96 border border-gray-300 rounded-lg flex flex-col items-center justify-center bg-gray-50">
+              <FileIcon className="w-16 h-16 text-indigo-400 mb-4" />
+              <p className="font-medium text-gray-900">{attachedFile.name}</p>
+              <p className="text-sm text-gray-500 mt-1">Document attached for analysis</p>
+              <button 
+                onClick={() => setAttachedFile(null)}
+                className="mt-4 flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-md text-sm font-medium transition-colors"
+              >
+                <X className="w-4 h-4" />
+                Remove
+              </button>
+            </div>
+          ) : (
+            <textarea
+              className="w-full h-96 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none font-sans"
+              placeholder="Paste email, document text, or invitation details here..."
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+          )}
           
           {error && <p className="text-red-500 text-sm mt-3">{error}</p>}
 
           <div className="mt-6 flex justify-end">
             <button
               onClick={handleAnalyze}
-              disabled={isAnalyzing || !text.trim()}
+              disabled={isAnalyzing || (!text.trim() && !attachedFile)}
               className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
             >
               {isAnalyzing ? (
@@ -500,38 +574,42 @@ export default function Analyze() {
 
       {/* Results Section */}
       <div className="w-[400px]">
-        {result ? (
+        {results && results.length > 0 ? (
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col h-full">
             <div className="bg-indigo-50 border-b border-indigo-100 p-4">
               <div className="flex items-center gap-2 text-indigo-700 mb-1">
                 <CheckCircle2 className="w-5 h-5" />
                 <h3 className="font-bold">Extraction Complete</h3>
               </div>
-              <p className="text-sm text-indigo-600">Review the extracted fields before saving.</p>
+              <p className="text-sm text-indigo-600">Found {results.length} event{results.length !== 1 ? 's' : ''}. Review the extracted fields.</p>
             </div>
             
-            <div className="p-4 flex-1 overflow-y-auto space-y-4">
-              <Field label="Title" value={result.title} />
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Date" value={result.date} />
-                <Field label="Location" value={result.location} />
-              </div>
-              <Field label="Organizer" value={result.organizer} />
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Priority" value={result.priority} isBadge />
-                <Field label="Suggested Rep" value={result.representative} />
-              </div>
-              <Field label="Theme" value={result.theme} />
-              <Field label="Format" value={result.format} />
-              <Field label="Deadline" value={result.deadline} />
+            <div className="p-4 flex-1 overflow-y-auto space-y-6">
+              {results.map((result, index) => (
+                <div key={index} className="border border-gray-100 rounded-lg p-4 bg-white shadow-sm space-y-4">
+                  <h4 className="font-semibold text-gray-800 border-b border-gray-100 pb-2">Event {index + 1}</h4>
+                  <Field label="Title" value={result.title} />
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Date" value={result.date} />
+                    <Field label="Location" value={result.location} />
+                  </div>
+                  <Field label="Organizer" value={result.organizer} />
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Priority" value={result.priority} isBadge />
+                    <Field label="Suggested Rep" value={result.representative} />
+                  </div>
+                  <Field label="Theme" value={result.theme} />
+                </div>
+              ))}
             </div>
 
             <div className="p-4 border-t border-gray-200 bg-gray-50">
               <button
                 onClick={handleSave}
-                className="w-full py-2.5 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
+                className="w-full py-2.5 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
               >
-                Save to Pipeline
+                <CheckCircle2 className="w-5 h-5" />
+                Save {results.length} Event{results.length !== 1 ? 's' : ''} to Pipeline
               </button>
             </div>
           </div>
