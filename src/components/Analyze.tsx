@@ -1,7 +1,7 @@
 import React, { useState, useContext, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppContext } from '../App';
-import { Upload, Loader2, FileText, CheckCircle2, Link as LinkIcon, FileSpreadsheet, ListChecks, Mail, HardDrive, File as FileIcon } from 'lucide-react';
+import { Upload, Loader2, FileText, CheckCircle2, Link as LinkIcon, FileSpreadsheet, ListChecks, Mail, HardDrive, File as FileIcon, Calendar, CheckSquare, Users, StickyNote } from 'lucide-react';
 import { useGoogleLogin } from '@react-oauth/google';
 import type { Event } from '../types';
 
@@ -22,9 +22,13 @@ export default function Analyze() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [workspaceUrl, setWorkspaceUrl] = useState('');
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
-  const [activeTab, setActiveTab] = useState<'url' | 'drive' | 'gmail'>('url');
+  const [activeTab, setActiveTab] = useState<'url' | 'drive' | 'gmail' | 'calendar' | 'tasks' | 'contacts' | 'keep'>('url');
   const [driveFiles, setDriveFiles] = useState<any[]>([]);
   const [emails, setEmails] = useState<any[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
+  const [tasksList, setTasksList] = useState<any[]>([]);
+  const [contactsList, setContactsList] = useState<any[]>([]);
+  const [keepNotes, setKeepNotes] = useState<any[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
 
@@ -36,7 +40,7 @@ export default function Analyze() {
       setAccessToken(tokenResponse.access_token);
       setShowWorkspaceModal(true);
     },
-    scope: 'https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.readonly https://mail.google.com/',
+    scope: 'https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.readonly https://mail.google.com/ https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/tasks.readonly https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/keep.readonly',
     onError: () => setError('Login Failed'),
   });
 
@@ -130,8 +134,112 @@ export default function Analyze() {
     if (showWorkspaceModal && accessToken) {
       if (activeTab === 'drive' && driveFiles.length === 0) fetchDriveFiles();
       if (activeTab === 'gmail' && emails.length === 0) fetchEmails();
+      if (activeTab === 'calendar' && calendarEvents.length === 0) fetchCalendarEvents();
+      if (activeTab === 'tasks' && tasksList.length === 0) fetchTasks();
+      if (activeTab === 'contacts' && contactsList.length === 0) fetchContacts();
+      if (activeTab === 'keep' && keepNotes.length === 0) fetchKeepNotes();
     }
   }, [activeTab, showWorkspaceModal, accessToken]);
+
+  const fetchCalendarEvents = async () => {
+    try {
+      setIsLoadingWorkspace(true);
+      const timeMin = new Date().toISOString();
+      const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&maxResults=10&singleEvents=true&orderBy=startTime`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      setCalendarEvents(data.items || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingWorkspace(false);
+    }
+  };
+
+  const fetchTasks = async () => {
+    try {
+      setIsLoadingWorkspace(true);
+      const res = await fetch(`https://tasks.googleapis.com/tasks/v1/users/@me/lists`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      const defaultList = data.items?.[0];
+      if (defaultList) {
+        const taskRes = await fetch(`https://tasks.googleapis.com/tasks/v1/lists/${defaultList.id}/tasks?maxResults=10`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const taskData = await taskRes.json();
+        setTasksList(taskData.items || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingWorkspace(false);
+    }
+  };
+
+  const fetchContacts = async () => {
+    try {
+      setIsLoadingWorkspace(true);
+      const res = await fetch(`https://people.googleapis.com/v1/people/me/connections?personFields=names,emailAddresses&pageSize=10`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      setContactsList(data.connections || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingWorkspace(false);
+    }
+  };
+
+  const fetchKeepNotes = async () => {
+    try {
+      setIsLoadingWorkspace(true);
+      const res = await fetch(`https://keep.googleapis.com/v1/notes`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      setKeepNotes(data.notes || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingWorkspace(false);
+    }
+  };
+
+  const handleCalendarSelect = (event: any) => {
+    let details = `Event: ${event.summary}\n`;
+    if (event.start?.dateTime) details += `Time: ${event.start.dateTime}\n`;
+    if (event.location) details += `Location: ${event.location}\n`;
+    if (event.description) details += `\nDescription:\n${event.description}`;
+    setText(details);
+    setShowWorkspaceModal(false);
+  };
+
+  const handleTaskSelect = (task: any) => {
+    let details = `Task: ${task.title}\n`;
+    if (task.notes) details += `\nNotes:\n${task.notes}`;
+    setText(details);
+    setShowWorkspaceModal(false);
+  };
+
+  const handleContactSelect = (contact: any) => {
+    const name = contact.names?.[0]?.displayName || 'Unknown';
+    const email = contact.emailAddresses?.[0]?.value || '';
+    setText(`Contact: ${name}${email ? ` (${email})` : ''}`);
+    setShowWorkspaceModal(false);
+  };
+
+  const handleKeepSelect = (note: any) => {
+    let details = `Note: ${note.title}\n\n`;
+    if (note.body?.text?.text) {
+      details += note.body.text.text;
+    }
+    setText(details);
+    setShowWorkspaceModal(false);
+  };
 
   const fetchDriveFiles = async () => {
     try {
@@ -444,24 +552,48 @@ export default function Analyze() {
               <button onClick={() => setShowWorkspaceModal(false)} className="text-gray-400 hover:text-gray-500">×</button>
             </div>
             
-            <div className="flex border-b border-gray-200 px-6 pt-2 gap-4">
+            <div className="flex border-b border-gray-200 px-6 pt-2 gap-4 overflow-x-auto whitespace-nowrap">
               <button 
                 onClick={() => setActiveTab('url')}
                 className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'url' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
               >
-                <LinkIcon className="w-4 h-4" /> Docs/Sheets URL
+                <LinkIcon className="w-4 h-4" /> Docs/Sheets
               </button>
               <button 
                 onClick={() => setActiveTab('drive')}
                 className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'drive' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
               >
-                <HardDrive className="w-4 h-4" /> Google Drive
+                <HardDrive className="w-4 h-4" /> Drive
               </button>
               <button 
                 onClick={() => setActiveTab('gmail')}
                 className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'gmail' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
               >
                 <Mail className="w-4 h-4" /> Gmail
+              </button>
+              <button 
+                onClick={() => setActiveTab('calendar')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'calendar' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                <Calendar className="w-4 h-4" /> Calendar
+              </button>
+              <button 
+                onClick={() => setActiveTab('tasks')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'tasks' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                <CheckSquare className="w-4 h-4" /> Tasks
+              </button>
+              <button 
+                onClick={() => setActiveTab('contacts')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'contacts' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                <Users className="w-4 h-4" /> Contacts
+              </button>
+              <button 
+                onClick={() => setActiveTab('keep')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${activeTab === 'keep' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                <StickyNote className="w-4 h-4" /> Keep
               </button>
             </div>
 
@@ -544,6 +676,78 @@ export default function Analyze() {
                     })
                   ) : (
                     <p className="text-gray-500 text-center py-4">No recent emails found.</p>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'calendar' && (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {isLoadingWorkspace ? (
+                    <div className="flex justify-center p-8 text-gray-500"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                  ) : calendarEvents.length > 0 ? (
+                    calendarEvents.map(event => (
+                      <div key={event.id} onClick={() => handleCalendarSelect(event)} className="p-3 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer flex flex-col gap-1">
+                        <span className="font-bold text-gray-800 text-sm">{event.summary || 'Untitled Event'}</span>
+                        {event.start?.dateTime && <span className="text-xs text-gray-500">{new Date(event.start.dateTime).toLocaleString()}</span>}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-500 text-center py-4">No upcoming events found.</p>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'tasks' && (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {isLoadingWorkspace ? (
+                    <div className="flex justify-center p-8 text-gray-500"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                  ) : tasksList.length > 0 ? (
+                    tasksList.map(task => (
+                      <div key={task.id} onClick={() => handleTaskSelect(task)} className="p-3 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer flex flex-col gap-1">
+                        <span className="font-bold text-gray-800 text-sm">{task.title || 'Untitled Task'}</span>
+                        {task.notes && <span className="text-xs text-gray-500 truncate">{task.notes}</span>}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-500 text-center py-4">No tasks found.</p>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'contacts' && (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {isLoadingWorkspace ? (
+                    <div className="flex justify-center p-8 text-gray-500"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                  ) : contactsList.length > 0 ? (
+                    contactsList.map(contact => {
+                      const name = contact.names?.[0]?.displayName || 'Unknown';
+                      const email = contact.emailAddresses?.[0]?.value || '';
+                      return (
+                        <div key={contact.resourceName} onClick={() => handleContactSelect(contact)} className="p-3 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer flex flex-col gap-1">
+                          <span className="font-bold text-gray-800 text-sm">{name}</span>
+                          {email && <span className="text-xs text-gray-500">{email}</span>}
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <p className="text-gray-500 text-center py-4">No contacts found.</p>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'keep' && (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {isLoadingWorkspace ? (
+                    <div className="flex justify-center p-8 text-gray-500"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                  ) : keepNotes.length > 0 ? (
+                    keepNotes.map(note => (
+                      <div key={note.name} onClick={() => handleKeepSelect(note)} className="p-3 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 cursor-pointer flex flex-col gap-1">
+                        <span className="font-bold text-gray-800 text-sm">{note.title || 'Untitled Note'}</span>
+                        {note.body?.text?.text && <span className="text-xs text-gray-500 truncate">{note.body.text.text}</span>}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-500 text-center py-4">No keep notes found.</p>
                   )}
                 </div>
               )}
