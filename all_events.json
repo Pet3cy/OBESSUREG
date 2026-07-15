@@ -1,0 +1,18 @@
+[
+  {
+    "id": "d491ebe2-84c9-433d-b26c-bff72b738ea5",
+    "eventName": "EU",
+    "institution": "United Nations / EEAS",
+    "date": "2026-12-18",
+    "theme": "Mental Health",
+    "priority": "High"
+  },
+  {
+    "id": "ada360f5-97f1-4707-bb92-7435f138e1ea",
+    "eventName": "EU",
+    "institution": "United Nations / EEAS",
+    "date": "2026-12-10",
+    "theme": "Democracy",
+    "priority": "High"
+  }
+]

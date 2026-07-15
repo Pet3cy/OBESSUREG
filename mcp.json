@@ -1,0 +1,19 @@
+{
+    "mcpServers": {
+        "default-server": {
+            "command": "node",
+            "args": [
+                "path/to/server/index.js",
+                "args..."
+            ],
+            "env": {
+                "HOME": "/Users/panagiotischatzimichail",
+                "LOGNAME": "panagiotischatzimichail",
+                "PATH": "/Users/panagiotischatzimichail/.npm/_npx/5a9d879542beca3a/node_modules/.bin:/Users/panagiotischatzimichail/node_modules/.bin:/Users/node_modules/.bin:/node_modules/.bin:/usr/local/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin:/Users/panagiotischatzimichail/.antigravity-ide/antigravity-ide/bin:/Applications/Docker.app/Contents/Resources/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/usr/local/share/dotnet:~/.dotnet/tools:/usr/local/go/bin",
+                "SHELL": "/bin/zsh",
+                "TERM": "xterm-256color",
+                "USER": "panagiotischatzimichail"
+            }
+        }
+    }
+}

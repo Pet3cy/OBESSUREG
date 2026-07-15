@@ -1,0 +1,6 @@
+{
+  "name": "EventFlow AI",
+  "description": "IT-specialist utility for automated email parsing and event extraction using openclaw. Identifies event names, dates, times, locations, and RSVP links with high precision.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
