@@ -102,7 +102,6 @@ async function startServer() {
       const { GoogleGenAI, Type } = await import("@google/genai");
       const ai = new GoogleGenAI({ 
         apiKey: apiKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
       });
       
       const response = await ai.models.generateContent({

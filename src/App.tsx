@@ -27,9 +27,11 @@ const defaultStaff: Staff[] = [
 
 function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const context = useContext(AppContext);
+  const pendingCount = context?.events.filter(e => e.status === 'Pending').length || 0;
 
   const navItems = [
-    { name: 'Dashboard', path: '/', icon: <LayoutDashboard className="w-5 h-5" /> },
+    { name: 'Dashboard', path: '/', icon: <LayoutDashboard className="w-5 h-5" />, badge: pendingCount },
     { name: 'Analyze', path: '/analyze', icon: <FileText className="w-5 h-5" /> },
     { name: 'Contacts', path: '/contacts', icon: <Users className="w-5 h-5" /> },
     { name: 'Reports', path: '/reports', icon: <BarChart3 className="w-5 h-5" /> },
@@ -50,14 +52,23 @@ function Layout({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.name}
                 to={item.path}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                className={`flex items-center justify-between px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-indigo-50 text-indigo-700'
                     : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                 }`}
               >
-                {item.icon}
-                {item.name}
+                <div className="flex items-center gap-3">
+                  {item.icon}
+                  {item.name}
+                </div>
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                    isActive ? 'bg-indigo-200 text-indigo-800' : 'bg-gray-200 text-gray-700'
+                  }`}>
+                    {item.badge}
+                  </span>
+                )}
               </Link>
             );
           })}

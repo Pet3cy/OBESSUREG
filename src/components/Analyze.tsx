@@ -1,8 +1,16 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppContext } from '../App';
-import { Upload, Loader2, FileText, CheckCircle2 } from 'lucide-react';
+import { Upload, Loader2, FileText, CheckCircle2, Link as LinkIcon, FileSpreadsheet, ListChecks } from 'lucide-react';
+import { useGoogleLogin } from '@react-oauth/google';
 import type { Event } from '../types';
+
+interface Section {
+  id: string;
+  title: string;
+  content: string;
+  selected: boolean;
+}
 
 export default function Analyze() {
   const [text, setText] = useState('');
@@ -10,25 +18,184 @@ export default function Analyze() {
   const [error, setError] = useState('');
   const [result, setResult] = useState<Partial<Event> | null>(null);
   
+  // Workspace Import state
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [workspaceUrl, setWorkspaceUrl] = useState('');
+  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
+  const [sections, setSections] = useState<Section[]>([]);
+  const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
+
   const context = useContext(AppContext);
   const navigate = useNavigate();
+
+  const login = useGoogleLogin({
+    onSuccess: (tokenResponse) => {
+      setAccessToken(tokenResponse.access_token);
+      setShowWorkspaceModal(true);
+    },
+    scope: 'https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/spreadsheets.readonly',
+    onError: () => setError('Login Failed'),
+  });
+
+  const extractIdFromUrl = (url: string) => {
+    const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    return match ? match[1] : url; // If not URL, assume it's just ID
+  };
+
+  const handleFetchWorkspace = async () => {
+    if (!workspaceUrl || !accessToken) return;
+    setIsLoadingWorkspace(true);
+    setError('');
+    setSections([]);
+
+    const fileId = extractIdFromUrl(workspaceUrl);
+    const isSheet = workspaceUrl.includes('spreadsheets');
+
+    try {
+      if (isSheet) {
+        // Fetch Spreadsheet
+        const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${fileId}?includeGridData=true`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!res.ok) throw new Error('Failed to fetch Spreadsheet');
+        const data = await res.json();
+        
+        const extractedSections: Section[] = data.sheets.map((sheet: any) => {
+          let content = '';
+          const grid = sheet.data?.[0];
+          if (grid && grid.rowData) {
+            content = grid.rowData.map((row: any) => {
+              if (!row.values) return '';
+              return row.values.map((v: any) => v.formattedValue || '').join(' | ');
+            }).join('\n');
+          }
+          return {
+            id: sheet.properties.sheetId.toString(),
+            title: sheet.properties.title,
+            content,
+            selected: true,
+          };
+        });
+        setSections(extractedSections);
+
+      } else {
+        // Fetch Document
+        const res = await fetch(`https://docs.googleapis.com/v1/documents/${fileId}`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!res.ok) throw new Error('Failed to fetch Document');
+        const data = await res.json();
+
+        // Extract text and split by Headings
+        let currentSection: Section = { id: 'root', title: 'Start of Document', content: '', selected: true };
+        const extractedSections: Section[] = [];
+
+        data.body?.content?.forEach((element: any) => {
+          if (element.paragraph) {
+            const style = element.paragraph.paragraphStyle?.namedStyleType || '';
+            const textContent = element.paragraph.elements?.map((el: any) => el.textRun?.content || '').join('') || '';
+            
+            if (style.startsWith('HEADING')) {
+              if (currentSection.content.trim() || currentSection.title !== 'Start of Document') {
+                extractedSections.push({ ...currentSection, content: currentSection.content.trim() });
+              }
+              currentSection = {
+                id: Math.random().toString(36).substr(2, 9),
+                title: textContent.trim() || 'Heading',
+                content: textContent,
+                selected: true,
+              };
+            } else {
+              currentSection.content += textContent;
+            }
+          }
+        });
+        if (currentSection.content.trim()) {
+          extractedSections.push({ ...currentSection, content: currentSection.content.trim() });
+        }
+        
+        setSections(extractedSections);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Error fetching document');
+    } finally {
+      setIsLoadingWorkspace(false);
+    }
+  };
+
+  const applyWorkspaceSelection = () => {
+    const selectedContent = sections
+      .filter(s => s.selected)
+      .map(s => `--- ${s.title} ---\n${s.content}`)
+      .join('\n\n');
+    setText(prev => prev + (prev ? '\n\n' : '') + selectedContent);
+    setShowWorkspaceModal(false);
+  };
+
+  const toggleSection = (id: string) => {
+    setSections(prev => prev.map(s => s.id === id ? { ...s, selected: !s.selected } : s));
+  };
 
   if (!context) return null;
 
   const handleAnalyze = async () => {
     if (!text.trim()) {
-      setError('Please enter some text to analyze.');
+      setError('Please enter some text or a Google Workspace URL to analyze.');
       return;
     }
 
     setIsAnalyzing(true);
     setError('');
 
+    let contentToAnalyze = text;
+    const urlMatch = text.trim().match(/^https:\/\/docs\.google\.com\/(spreadsheets|document)\/d\/([a-zA-Z0-9-_]+)/);
+
     try {
+      if (urlMatch) {
+        if (!accessToken) {
+          setIsAnalyzing(false);
+          setWorkspaceUrl(text.trim());
+          login();
+          return;
+        }
+
+        const isSheet = urlMatch[1] === 'spreadsheets';
+        const fileId = urlMatch[2];
+
+        if (isSheet) {
+          const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${fileId}?includeGridData=true`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+          if (!res.ok) throw new Error('Failed to fetch Spreadsheet. Check permissions.');
+          const data = await res.json();
+          contentToAnalyze = data.sheets.map((sheet: any) => {
+            const grid = sheet.data?.[0];
+            if (!grid || !grid.rowData) return '';
+            return `--- ${sheet.properties.title} ---\n` + grid.rowData.map((row: any) => {
+              if (!row.values) return '';
+              return row.values.map((v: any) => v.formattedValue || '').join(' | ');
+            }).join('\n');
+          }).join('\n\n');
+        } else {
+          const res = await fetch(`https://docs.google.com/v1/documents/${fileId}`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+          if (!res.ok) throw new Error('Failed to fetch Document. Check permissions.');
+          const data = await res.json();
+          let docText = '';
+          data.body?.content?.forEach((element: any) => {
+            if (element.paragraph) {
+              docText += element.paragraph.elements?.map((el: any) => el.textRun?.content || '').join('') || '';
+            }
+          });
+          contentToAnalyze = docText;
+        }
+      }
+
       const response = await fetch('/api/events/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text: contentToAnalyze })
       });
 
       if (!response.ok) {
@@ -89,12 +256,21 @@ export default function Analyze() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto flex gap-8">
+    <div className="max-w-5xl mx-auto flex gap-8 relative">
       {/* Input Section */}
       <div className="flex-1 space-y-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Analyze Invitation</h2>
-          <p className="text-gray-500 mt-1">Paste the event invitation text below to extract structured data.</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Analyze Invitation</h2>
+            <p className="text-gray-500 mt-1">Paste the event invitation text below to extract structured data.</p>
+          </div>
+          <button
+            onClick={() => accessToken ? setShowWorkspaceModal(true) : login()}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-sm"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-green-600" />
+            Import from Google Docs/Sheets
+          </button>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
@@ -173,6 +349,69 @@ export default function Analyze() {
           </div>
         )}
       </div>
+
+      {/* Workspace Import Modal */}
+      {showWorkspaceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-900">Import from Google Workspace</h3>
+              <button onClick={() => setShowWorkspaceModal(false)} className="text-gray-400 hover:text-gray-500">×</button>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Paste Google Doc or Sheet URL..."
+                  value={workspaceUrl}
+                  onChange={(e) => setWorkspaceUrl(e.target.value)}
+                  className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                />
+                <button
+                  onClick={handleFetchWorkspace}
+                  disabled={isLoadingWorkspace || !workspaceUrl}
+                  className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isLoadingWorkspace ? <Loader2 className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
+                  Fetch
+                </button>
+              </div>
+
+              {sections.length > 0 && (
+                <div className="mt-6">
+                  <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-gray-700">
+                    <ListChecks className="w-4 h-4" />
+                    Select sections to import
+                  </div>
+                  <div className="space-y-2 border border-gray-200 rounded-lg p-2 max-h-64 overflow-y-auto bg-gray-50">
+                    {sections.map(section => (
+                      <label key={section.id} className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-md cursor-pointer hover:bg-indigo-50">
+                        <input
+                          type="checkbox"
+                          checked={section.selected}
+                          onChange={() => toggleSection(section.id)}
+                          className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                        />
+                        <span className="font-medium text-gray-800 text-sm">{section.title}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            {sections.length > 0 && (
+              <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+                <button
+                  onClick={applyWorkspaceSelection}
+                  className="px-6 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700"
+                >
+                  Import Selected Sections
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
